@@ -1,0 +1,636 @@
+---
+title: "Movielens Capstone Project HarvardX"
+author: "Cynthia McGinnis"
+date: "2/3/2019"
+output:
+  word_document:
+    toc: yes
+  html_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## MovieLens Introduction
+The MovieLens data set was collected by GroupLens Research. 
+Can we predict movie ratings based on user preferance, age of a movie?  Using the MovieLens data set and penalized least squares, the following R script calculates the RMSE based on user ratings, movieId and the age of the movie.
+
+The MovieLens data set contains 10000054 rows, 10677 movies, 797 genres and 69878 users.
+
+The steps performed for analysis of the data 
+- Created an age of movie column
+- Graphic displays of movie, users and ratings in order to find a pattern or insight to the   
+  behavior of the data.
+- Explored Genres to determine if ratings could be predicted by genre.
+- Explored the Coefficient of Determination R-Squared
+- Graphically explored the linear correlation coefficient, r-value
+- Calculate RMSE based on movieId, userId, and age of the movie.
+
+After exploring the movies through graphical representations and calculating RMSE, I found the best predictor for ratings was movieId, userId.  The age of the movie didn't change the rmse.
+
+The final RMSE is 0.8252
+
+The following are the libraries I used to explore the data.  Explorations that didn't seem to lead to an insight were taken out of the script.
+```{r, include=FALSE}
+
+library(stringr)
+library(ggplot2)
+library(caret)
+library(readr)
+library(dplyr)
+library(stats)
+library(corrplot)
+library(tidyr)
+library(lubridate)
+library(data.table)
+library(DT)
+library(methods)
+library(knitr)
+library(grid)
+library(gridExtra)
+library(Matrix)
+library(corrplot)
+library(RColorBrewer)
+library(corrplot)
+library(magrittr)
+library(viridis)
+library(stringi)
+library(matrixStats)
+library(heuristica)
+library(gam)
+library(modelr)
+library(tidyr)
+library(tidyselect)
+library(broom)
+library(tibble)
+library(purrr)
+library(forcats)
+library(DBI)
+library(hexbin)
+```
+
+# DownLoad the data
+```{r, echo=TRUE}
+dl <- tempfile()
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+ratings <- read.table(text = gsub("::", "\t", readLines(unzip(dl, "ml-10M100K/ratings.dat"))),
+                      col.names = c("userId", "movieId", "rating", "timestamp"))
+
+```
+
+# Build the data set
+```{r}
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres")
+movies <- as.data.frame(movies) %>% mutate(movieId = as.numeric(levels(movieId))[movieId],
+                                           title = as.character(title),
+                                           genres = as.character(genres))
+
+#Explore the size of the data set
+movielens <- left_join(ratings, movies, by = "movieId")
+nrow(movielens)
+n_distinct(movielens$movieId)
+n_distinct(movielens$genres)
+n_distinct(movielens$userId)
+```
+
+#Validation set will be 10% of the movieLens data
+```{r}
+set.seed(1)
+test_index <- createDataPartition(y = movielens$rating, times = 1, p = 0.1, list = FALSE)
+edx <- movielens[-test_index,]
+temp <- movielens[test_index,]
+```
+# Make sure userId and movieId in validation set are also in edx set
+```{r}
+validation <- temp %>% 
+  semi_join(edx, by = "movieId") %>%
+  semi_join(edx, by = "userId")
+```
+
+# Add rows removed from validation set back into edx set
+```{r}
+removed <- anti_join(temp, validation)
+edx <- rbind(edx, removed)
+```
+##Data Cleaning and, data exploration and Data Visulization
+#In order to determine if age of the movie is a factor for predicting rating, I extracted the premier date of the movie, and then calculated the age of the movie.  I will also looked at individual genres for genre effect, as well as, effects of user ratings.
+```{r}
+head(edx)
+glimpse(edx)
+```
+#How many distinct movie, users and genres
+```{r}
+n_distinct(edx$movieId)
+n_distinct(edx$genres)
+n_distinct(edx$userId)
+nrow(edx)
+```
+#Convert Timestamp to year
+```{r}
+edx <- mutate(edx, year_rated = year(as_datetime(timestamp)))
+head(edx)
+```
+# Extract the premier date and calculate the age of the movie.  Explore whether or not the age of the movie effects predicted ratings
+```{r}
+#extracting the premier date
+premier <- stringi::stri_extract(edx$title, regex = "(\\d{4})", comments = TRUE ) %>% as.numeric()
+
+#Add the premier date
+edx_with_title_dates <- edx %>% mutate(premier_date = premier)
+head(edx_with_title_dates)
+```
+#After extracting the premier date from the title, check for accuracy
+
+```{r}
+#drop the timestamp
+edx_with_title_dates <- edx_with_title_dates %>% select(-timestamp)
+
+head(edx_with_title_dates)
+
+#looking at the dates - are they correct?
+
+edx_with_title_dates %>% filter(premier_date > 2018) %>% group_by(movieId, title, premier_date) %>% summarize(n = n())
+edx_with_title_dates %>% filter(premier_date < 1900) %>% group_by(movieId, title, premier_date) %>% summarize(n = n())
+
+#Fix the incorrect dates
+edx_with_title_dates[edx_with_title_dates$movieId == "27266", "premier_date"] <- 2004
+edx_with_title_dates[edx_with_title_dates$movieId == "671", "premier_date"] <- 1996
+edx_with_title_dates[edx_with_title_dates$movieId == "2308", "premier_date"] <- 1973
+edx_with_title_dates[edx_with_title_dates$movieId == "4159", "premier_date"] <- 2001
+edx_with_title_dates[edx_with_title_dates$movieId == "5310", "premier_date"] <- 1985
+edx_with_title_dates[edx_with_title_dates$movieId == "8864", "premier_date"] <- 2004
+edx_with_title_dates[edx_with_title_dates$movieId == "1422", "premier_date"] <- 1997
+edx_with_title_dates[edx_with_title_dates$movieId == "4311", "premier_date"] <- 1998
+edx_with_title_dates[edx_with_title_dates$movieId == "5472", "premier_date"] <- 1972
+edx_with_title_dates[edx_with_title_dates$movieId == "6290", "premier_date"] <- 2003
+edx_with_title_dates[edx_with_title_dates$movieId == "6645", "premier_date"] <- 1971
+edx_with_title_dates[edx_with_title_dates$movieId == "8198", "premier_date"] <- 1960
+edx_with_title_dates[edx_with_title_dates$movieId == "8905", "premier_date"] <- 1992
+edx_with_title_dates[edx_with_title_dates$movieId == "53953", "premier_date"] <- 2007
+
+```
+#Calculate the age of the movie
+```{r}
+#Calculate the age of a movie
+edx_with_title_dates <- edx_with_title_dates %>% mutate(age_of_movie = 2018 - premier_date, 
+                                                        rating_date_range = year_rated - premier_date)
+head(edx_with_title_dates)
+```
+# Graph the data
+```{r, message=FALSE}
+#Distribution of Movie Ratings
+edx %>% group_by(movieId) %>% summarize(n = n()) %>%
+  ggplot(aes(n)) + geom_histogram(fill = "cadetblue3", color = "grey20", bins = 10) +
+  scale_x_log10() +
+  ggtitle("Number of Movies Ratings")
+
+
+
+```
+#Number of Ratings by userId
+```{r, message=FALSE}
+#Distribution of Users
+edx %>% group_by(userId) %>% summarize(n = n()) %>%
+  ggplot(aes(n)) + geom_histogram(fill = "cadetblue3", color = "grey20", bins = 10) +
+  scale_x_log10() + 
+  ggtitle("Number of Users Ratings")
+
+```
+
+# Calculate movie rating average, user rating average, average rating by age of movie, average rating by year
+```{r}
+#Movie rating averages
+movie_avgs <- edx_with_title_dates %>% group_by(movieId) %>% summarize(avg_movie_rating = mean(rating))
+user_avgs <- edx_with_title_dates %>% group_by(userId) %>% summarize(avg_user_rating = mean(rating))
+year_avgs <- edx_with_title_dates%>% group_by(year_rated) %>% summarize(avg_rating_by_year = mean(rating)) #year the movie was rated
+age_avgs <- edx_with_title_dates %>% group_by(age_of_movie) %>% summarize(avg_rating_by_age = mean(rating)) #age of movie
+head(age_avgs)
+
+```
+
+```{r}
+head(user_avgs)
+```
+
+
+#What is the relationship to the age of a movie and the movies average rating?
+#Graph age of movie vs average movie rating
+
+```{r, message=FALSE}
+# age of movie vs average movie rating
+age_avgs %>%
+  ggplot(aes(age_of_movie, avg_rating_by_age)) +
+  geom_point() +
+  ggtitle("Age of a Movie vs Average Movie Rating")
+```
+# The above plot shows more variability as movies age.  The plot, also, shows higher ratings the older a movies is up to 90 years old, then the ratings drop.  
+
+```{r, message=FALSE}
+# userId vs average movie rating
+user_avgs %>%
+  ggplot(aes(userId, avg_user_rating)) +
+  geom_point(alpha = 1/20, colour = "blue") +
+  ggtitle("User vs Average User Rating")
+```
+#From the above graph, we can see average ratings by user are pretty consistent between 2.5 and 4.5
+
+#Calculating the lm of the age of a movie vs average rating
+```{r}
+summary(lm(avg_rating_by_age ~ age_of_movie, data = age_avgs))
+```
+#We can see that R-square is small at 0.30
+
+#Plot the Residuals
+```{r, message=FALSE}
+avg_rating.lm <- lm(avg_rating_by_age ~ age_of_movie, data = age_avgs)
+avg_rating.res <- resid(avg_rating.lm)
+
+plot(age_avgs$age_of_movie, avg_rating.res,
+     ylab='Residuals', xlab='age_of_movie', 
+     main = 'Average Rating by Age of Movie') + abline(0,0)
+
+```
+#The R-squared is fairly small at 0.30; 30% of the variation in movie ratings can be prdicted by 
+# explore the data graphically to see if age of the movie and rating are coorelated
+```{r, message=FALSE}
+#Movies less than 75 years old
+age_of_movie_less_than75 <- age_avgs %>% filter(age_of_movie <75)
+
+# age of movie less than 75 years old vs average movie rating
+age_of_movie_less_than75 %>%
+  ggplot(aes(age_of_movie, avg_rating_by_age)) +
+  geom_point() +
+  ggtitle("Age of a Movie vs Average Movie Rating")
+
+
+```
+#Calculate the R-squared value
+```{r}
+age_lessthan75_rating.lm <- lm(avg_rating_by_age ~ age_of_movie, data = age_of_movie_less_than75)
+summary(age_lessthan75_rating.lm)
+
+```
+#The R-squared increased to 0.745 
+
+#Plot the residuals
+```{r, message=FALSE}
+
+head(age_of_movie_less_than75)
+
+age_lessthan75.res <- resid(age_lessthan75_rating.lm)
+
+plot(age_of_movie_less_than75$age_of_movie, age_lessthan75.res,
+     ylab='Residuals', xlab='age_of_movie', 
+     main = 'Average Rating by Age of Movie') + abline(0,0)
+```
+
+#Let's look at moveies between 20 and 75 years old as the graph looks more linear in that time frame
+```{r}
+#Movies between 20 and 75 years old
+age_between20_and_75 <- age_avgs %>% filter((age_of_movie > 20) & (age_of_movie < 75))
+```
+
+```{r, message=FALSE}
+# graph the age of movie between 30 and 75 years old
+age_between20_and_75 %>%
+  ggplot(aes(age_of_movie, avg_rating_by_age)) +
+  geom_point() + ggtitle("Movies between 30 and 75 years old vs average movie rating")
+
+```
+#The plot above appears to be a linear trend; however, the r-square is 0.69
+```{r}
+summary(lm(avg_rating_by_age ~ age_of_movie, data = age_between20_and_75))
+```
+#The R-squared value is lower at 0.6981
+
+```{r, message=FALSE}
+# graph the age of movie between 20 and 40 years old
+age_between20_and_40 <- age_avgs %>% filter((age_of_movie > 20) & (age_of_movie < 40))
+
+age_between20_and_40 %>%
+  ggplot(aes(age_of_movie, avg_rating_by_age)) +
+  geom_point() + ggtitle('Age of Movie between 20 and 40 years old')
+
+```
+#The above graph is displying a linear trend with older movies having higher ratings
+
+```{r}
+#calculate a linear model
+summary(lm(avg_rating_by_age ~ age_of_movie, data = age_between20_and_40))
+```
+# The R-squared value is much higher than at 0.71
+```{r, message=FALSE}
+#Movies between 0 and 30 years old
+age_less_than30 <- age_avgs %>% filter((age_of_movie < 30))
+
+#Graph movies less than 30 years old and average movie rating
+age_less_than30 %>%
+  ggplot(aes(age_of_movie, avg_rating_by_age)) +
+  geom_point() + ggtitle('Age of Movie less then 30 years old')
+```
+#For movies less than 30 years old there appears to be quite a bit of variation.  We can see from the linear model that r-squared is nearly zero.
+```{r}
+summary(lm(avg_rating_by_age ~ age_of_movie, data = age_less_than30))
+```
+#The age of a movie did seem to effect the outcome of the average rating.  This is possibly due to a higher number of ratings for older movies.  
+
+#Do Genres have an effect on ratings?
+##I extracted the genres from the data with the idea to do an analysis on each genre.  Some of the exploration I did here was removed as it didn't appear to effect the RMSE and this analysis keep growing! But I did get some nice graphs pertaining to genres.
+```{r}
+
+#Genres split the data into single genres
+dat <- edx_with_title_dates %>% separate_rows(genres, sep ="\\|")
+
+head(dat)
+
+```
+#Count the number of movies using movieId in each genre
+```{r}
+genre_count_by_movieId <- dat %>% group_by(movieId, genres) %>% summarize(n = n())
+head(genre_count_by_movieId)
+```
+#Total number of movies in each genre
+```{r}
+number_of_genres <- dat %>% group_by(genres) %>% summarize(n = n())
+number_of_genres
+```
+#List the genres.  Movies are either in one genre or multiple genres
+```{r}
+genre_list <- number_of_genres$genres
+genre_list
+```
+
+#Explore the distribution of ratings by genre
+```{r}
+#Distribution of Ratings per Genre
+temp <- dat %>%
+  group_by(genres) %>%
+  summarize(n=n()) %>%
+  ungroup() %>%
+  mutate(sumN = sum(n), percentage = n/sumN) %>%
+  arrange(-percentage)
+```
+#Bar Graph of Genre's
+```{r, message=FALSE}
+temp %>%
+  ggplot(aes(reorder(genres, percentage), percentage, fill= percentage)) +
+  geom_bar(stat = "identity") + coord_flip() +
+  scale_fill_distiller(palette = "YlOrRd") + labs(y = "Percentage", x = "Genre") +
+  ggtitle("Distribution of Genres by Percent Rated")
+```
+#From the above graph, we can see Drama had the highest percentage of ratings.
+
+#Genre's Mean rating
+```{r, message=FALSE}
+temp <- dat %>%
+  group_by(genres) %>%
+  summarize(mean_rating_by_genre=mean(rating)) %>%
+  arrange(-mean_rating_by_genre)
+
+temp %>%
+  ggplot(aes(reorder(genres, mean_rating_by_genre), mean_rating_by_genre, fill= mean_rating_by_genre)) +
+  geom_bar(stat = "identity") + coord_flip() +
+  scale_fill_distiller(palette = "YlOrRd") + labs(y = "Mean Rating", x = "Genre") +
+  ggtitle("Average Rating of Genres")
+```
+#Film Noir had the highest average rating, while Horror had the lowest average rating.
+
+#Explore movie ratings based on number of ratings and value of the rating
+```{r}
+#Graph of movies with more than 10000 ratings and a mean rating greater than 4. 
+avg_rating_greater_than_4 <- edx %>% group_by(title) %>%
+     summarize(mean_rating= mean(rating), n = n()) %>% filter(mean_rating >=4) %>% arrange(desc(n, mean_rating))
+
+avg_rating_greater_than_4 %>% filter(n >=10000) %>%
+  ggplot(aes(reorder(title, n), n, fill = n)) +
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") + xlab("Movie") +ylab('Number of Ratings') +
+  ggtitle("Movies with an average rating\ngreater than or equal to 4\nand Number of Ratings  > 10000") 
+
+
+```
+# Examine Movies with ratings between 3 and 4 and more than 10000 ratings
+```{r, message=FALSE}
+avg_between3_4 <- edx %>% group_by(title) %>%
+     summarize(mean_rating= mean(rating), n = n()) %>% filter(n > 10000, (mean_rating >= 3 & mean_rating < 4)) %>% arrange(desc(n, mean_rating))
+
+p <- avg_between3_4 %>% slice(1:40) 
+p %>% 
+  ggplot(aes(reorder(title, n), n, fill = n)) + 
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") +
+  ggtitle("Average ratings 3<= r < 4 and n > 10000") + xlab('Movie') + ylab('Number of Ratings') +
+  theme_classic()
+
+```
+
+#Movies with an average rating between 2 and 3  lets look at number of ratings greater than 5000
+```{r, message=FALSE}
+avg_between2_3 <- edx %>% group_by(title) %>%
+     summarize(mean_rating= mean(rating), n = n()) %>% filter(n > 5000, (mean_rating >= 2 & mean_rating < 3)) %>% arrange(desc(n, mean_rating))
+
+
+avg_between2_3 %>% 
+  ggplot(aes(reorder(title, n), n, fill = n)) + 
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") +
+  ggtitle("Average ratings 2<= r < 3 and n > 5000") + xlab('Movie') + ylab('Number of Ratings') +
+  theme_classic()
+
+```
+#Less than 10000 ratings and a rating less than 2 and number of ratings greater than 500
+```{r, message=FALSE}
+avg_rating_less_than_2 <- edx %>% group_by(title) %>%
+     summarize(mean_rating= mean(rating), n = n()) %>% filter(n > 500, mean_rating < 2) %>% arrange(desc(n, mean_rating))
+
+avg_rating_less_than_2 %>% 
+  ggplot(aes(reorder(title, n), n, fill = n)) + 
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") +
+  ggtitle("Average ratings  < 2") + xlab('Movie') + ylab('Number of Ratings') +
+  theme_classic()
+
+```
+
+#Compute the least squares for movieId
+```{r, message=FALSE}
+#Which movies have a large number of ratings and a rating larger than the average mu
+mu <- mean(edx$rating)
+edx %>% group_by(title) %>%
+  summarize(b_i = mean(rating - mu), n = n()) %>% filter(b_i > 0.5, n > 10000) %>%
+  ggplot(aes(reorder(title, b_i), b_i, fill = n)) +
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") +
+  ggtitle("") + xlab("Movie Title") +
+  ggtitle("Movie rating - mu,\nfor Number of ratings > 10000") +
+  theme_classic()
+
+```
+#Regularized Movie Averages
+```{r, message=FALSE}
+movie_avgs <- edx %>% group_by(movieId) %>% summarize(b_i = mean(rating - mu))
+movie_reg_avgs <- edx %>% 
+  group_by(movieId) %>%
+  summarize(b_i = sum(rating - mu)/(n()+1), n_i = n())
+
+movie_titles <- edx %>% select(movieId, title) %>% distinct()
+
+
+edx_with_avgs <- edx %>% group_by(title, movieId) %>% summarize(n = n()) %>%
+  left_join(movie_reg_avgs, by = "movieId") %>%
+  arrange(desc(b_i, n))
+
+edx_with_avgs %>% filter(n > 15000) %>%
+  ggplot(aes(reorder(title, b_i), b_i, fill = n)) +
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") +
+  ggtitle("") + xlab("Movie Title") + ggtitle('Regularized Movie Averages\nfor Number of Ratings > 20000') +
+  theme_classic()
+
+
+```
+#Regularized Movie Averages for the movies with regularized ratings less than 2
+```{r, message=FALSE}
+
+head(edx_with_avgs)
+p <- edx_with_avgs %>% arrange(b_i) %>% filter(b_i < -2) %>% arrange((b_i))
+p
+
+p %>% 
+ ggplot(aes(reorder(title, b_i), b_i, fill = n)) +
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") +
+  ggtitle("") + xlab("Movie Title") + ggtitle('Regularized Movie Averages b_i < -2') +
+  theme_classic()
+```
+#Movies with number of ratings larger than 1000 and regularized average less than 0.
+```{r, message=FALSE}
+edx_with_avgs %>% filter(n > 10000, b_i < 0.0) %>%
+  ggplot(aes(reorder(title, b_i), b_i, fill = n)) +
+  geom_bar(stat = "identity") + coord_flip() + scale_fill_distiller(palette = "PuBuGn") +
+  ggtitle("") + xlab("Movie Title") + ggtitle('Regularized Movie Averages\nfor Number of Ratings > 20000') +
+  theme_classic()
+
+```
+
+#Explore correlation between ratings, users, movieId age of movie and number of ratings
+
+```{r}
+#Is there a correlation
+
+#Number of movie ratings per movie
+n_movies_ratings <- edx_with_title_dates %>% group_by(movieId) %>% summarize(n = n())
+
+#Average Movie Rating for each movie
+avg_movie_rat <- edx_with_title_dates %>% group_by(movieId) %>% summarize(avg_m_r = mean(rating))
+
+#Create correlation data
+cor_dat <- edx_with_title_dates %>% select(rating, movieId, userId, year_rated, age_of_movie, rating_date_range, premier_date) %>%
+  left_join(n_movies_ratings, by = "movieId") %>%
+  left_join(avg_movie_rat, by = 'movieId')
+head(cor_dat)
+```
+#Graph the correlation
+```{r, message=FALSE}
+temp <- cor_dat %>% select(one_of("rating", "movieId", "userId", "year_rated", "age_of_movie", 
+                                               "rating_date_range", "premier_date", "n", "avg_m_r")) %>% as.matrix()
+M <- cor(temp, use = "pairwise.complete.obs")
+
+corrplot(M, order = "hclust", addrect = 2, type = "lower", col = brewer.pal(n = 8, name = "RdBu"))
+```
+#What is the effect of the age of the movie
+```{r, message=FALSE}
+corr_by_age_of_movie <- cor_dat %>% filter((age_of_movie >20) & (age_of_movie < 70))
+temp <- corr_by_age_of_movie %>% select(one_of("rating", "movieId", "userId", "year_rated", "age_of_movie", 
+                                  "rating_date_range", "n", "premier_date", "avg_m_r")) %>% as.matrix()
+M <- cor(temp, use = "pairwise.complete.obs")
+
+corrplot(M, order = "hclust", addrect = 2, type = "lower", col = brewer.pal(n = 8, name = "RdBu"))
+```
+
+```{r, message=FALSE}
+
+#Is there a relationship between number of ratings and the average rating
+get_cor <- function(df){
+  m <- cor(df$x, df$y, use="pairwise.complete.obs");
+  eq <- substitute(italic(r) == cor, list(cor = format(m, digits = 2)))
+  as.character(as.expression(eq));
+}
+
+#Number of ratings vs avg movie ratings
+cor_dat %>%
+  ggplot(aes(n, avg_m_r)) + stat_bin_hex(bins = 50) + scale_fill_distiller(palette = "Spectral") +
+  stat_smooth(method = "lm", color = "orchid", size = 1) +
+  annotate("text", x = 20000, y = 2.5, label = get_cor(data.frame(x = cor_dat$n, y = cor_dat$avg_m_r)), 
+           parse = TRUE, color = "orchid", size = 7) + ylab("Average Movie Rating") + xlab("Number of Ratings")
+```
+#Is there an Age Effect on Movie Ratings?
+```{r, message=FALSE}
+cor_dat %>% 
+  ggplot(aes(age_of_movie, avg_m_r)) + stat_bin_hex(bins = 50) + scale_fill_distiller(palette = "Spectral") +
+  stat_smooth(method = "lm", color = "orchid", size = 1) +
+  annotate("text", x = 75, y = 0.9, label = get_cor(data.frame(x = corr_by_age_of_movie$age_of_movie, y = corr_by_age_of_movie$avg_m_r)), 
+           parse = TRUE, color = "orchid", size = 7) + ylab("Average Movie Rating") + xlab('Age of Movie')
+```
+
+#Calculate the RMSE
+```{r, message=FALSE}
+
+#RMSE function
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+
+#Choose the tuning value
+lambdas <- seq(0,5,.5)
+rmses <- sapply(lambdas, function(l){
+  mu <- mean(edx_with_title_dates$rating)
+  
+  b_i <- edx_with_title_dates %>%
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - mu)/(n() + l))
+  
+  b_u <- edx_with_title_dates %>%
+    left_join(b_i, by='movieId') %>% 
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - mu)/(n() +l))
+  
+  predicted_ratings <- edx_with_title_dates %>%
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    mutate(pred = mu + b_i +  b_u) %>% .$pred
+  
+  return(RMSE(predicted_ratings, edx_with_title_dates$rating))
+})
+
+qplot(lambdas, rmses)
+lambdas[which.min(rmses)]
+```
+# Using the model on the Validation data
+```{r, message=FALSE}
+mu <- mean(validation$rating)
+l <- 0.15
+b_i <- validation %>%
+    group_by(movieId) %>%
+    summarize(b_i = sum(rating - mu)/(n() + l))
+  
+b_u <- validation %>%
+    left_join(b_i, by='movieId') %>% 
+    group_by(userId) %>%
+    summarize(b_u = sum(rating - b_i - mu)/(n() +l))
+  
+predicted_ratings <- validation %>%
+    left_join(b_i, by = "movieId") %>%
+    left_join(b_u, by = "userId") %>%
+    mutate(pred = mu + b_i +  b_u) %>% .$pred
+
+RMSE(predicted_ratings, validation$rating)
+```
+# I originally calculated a b_a for the age of a movie but found it didn't lower my RMSE so took it out and didn't include it in this script. 
+#I used movieId and userId to calculate the RMSE and was able to achieve an RMSE = 0.826
+
+#The code below utilizes the package "Metrics", which resulted in the same RMSE.  I included this as a check for my calculations.
+```{r}
+
+library(Metrics)
+rmse(validation$rating, predicted_ratings)
+```
+#This was an amazing assignment; I'm sure I did way more than I needed to as this script is quite long.  However, I wanted to use this data as a learning tool to explore as much as possible from what I've learned in this R adventure.
