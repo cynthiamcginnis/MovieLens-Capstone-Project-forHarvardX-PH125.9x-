@@ -1,4 +1,4 @@
-# MovieLens-Capstone-Project-forHarvardX-PH125.9x-
+# MovieLens-Capstone-Project-for HarvardX-PH125.9x-
 MovieLens Introduction
 The MovieLens data set was collected by GroupLens Research. Can we predict movie ratings based on user preferance, age of a movie? Using the MovieLens data set and penalized least squares, the following R script calculates the RMSE based on user ratings, movieId and the age of the movie.
 The MovieLens data set contains 10000054 rows, 10677 movies, 797 genres and 69878 users.
